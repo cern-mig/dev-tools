@@ -2,6 +2,30 @@ Code Style
 ==========
 
 The code must be PEP8 compliant (http://www.python.org/dev/peps/pep-0008/).
+To install `pep8`:
+```
+pip install pep8
+```
+and then simply run the `pep8` command against the interested module:
+```
+pep8 module/
+```
+
+Code checker
+============
+
+It is very recommended to run static code analyzer like `pylint`,
+you can find a `pylint` configuration file in this folder,
+it is called `.pylintrc`.
+You can either place `.pylintrc` in your home folder or in the module
+folder, if you chosed the latest you then have to pass the file to pylint:
+```
+pylint --rcfile=.pylintrc module/
+```
+otherwise simply run:
+```
+pylint module/
+```
 
 How to release a new version of the module
 ==========================================
