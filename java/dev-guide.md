@@ -36,7 +36,7 @@ mvn site
 
 If the command executes successfully the updated documentation will
 appear at this address, with a delay of 5-15 minutes:
-[dirq documentation](http://cern-mig.github.com/java-dirq/).
+http://cern-mig.github.com/project-name/.
 
 
 Build a snapshot
