@@ -44,7 +44,11 @@ http://wiki.python.org/moin/CheeseShopTutorial#Submitting_Packages_to_the_Packag
 
 and do not forget to set the `.pypirc` file (http://docs.python.org/2/distutils/packageindex.html#pypirc).
 
-You can now proceed and release the package using the release script:
+You can now proceed and release the package using the release script,
+from the module's git root run the helper script provided:
 ```bash
-sh release.sh
+sh path/to/release-python.sh
 ```
+
+It will propose you the module name / version to be released,
+if everything is as expected confirm and proceed with the release.
