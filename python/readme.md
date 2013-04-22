@@ -3,11 +3,11 @@ Code Style
 
 The code must be PEP8 compliant (http://www.python.org/dev/peps/pep-0008/).
 To install `pep8`:
-```
+```bash
 pip install pep8
 ```
 and then simply run the `pep8` command against the interested module:
-```
+```bash
 pep8 module/
 ```
 
@@ -19,11 +19,11 @@ you can find a `pylint` configuration file in this folder,
 it is called `.pylintrc`.
 You can either place `.pylintrc` in your home folder or in the module
 folder, if you chosed the latest you then have to pass the file to pylint:
-```
+```bash
 pylint --rcfile=.pylintrc module/
 ```
 otherwise simply run:
-```
+```bash
 pylint module/
 ```
 
@@ -45,6 +45,6 @@ http://wiki.python.org/moin/CheeseShopTutorial#Submitting_Packages_to_the_Packag
 and do not forget to set the `.pypirc` file (http://docs.python.org/2/distutils/packageindex.html#pypirc).
 
 You can now proceed and release the package using the release script:
-```
+```bash
 sh release.sh
 ```

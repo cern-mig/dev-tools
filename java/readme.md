@@ -12,7 +12,7 @@ Generate documentation and upload it to GitHub Pages
 ====================================================
 
 First you have to generate the package documentation:
-```
+```bash
 # generate apidocs in target/site/apidocs/
 mvn javadoc:javadoc
 ```
@@ -29,7 +29,7 @@ GitHub Maven plugin (in your `~/.m2/settings.xml`).
 You find the recipe in the plugin page:
 https://github.com/github/maven-plugins
 
-```
+```bash
 # upload it to gh-pages branch in github
 mvn site
 ```
@@ -49,7 +49,7 @@ a snapshot first have a read at their guide:
 Building a snapshot is as easy as running a single command when you have
 proper configuration.
 
-```
+```bash
 mvn clean deploy
 ```
 
@@ -63,7 +63,7 @@ central Maven repo follow the Sonatype guide:
 If you have the proper configuration for Sonatype and it is not your first
 release then the release process can be summarized with the following steps:
 
-```
+```bash
 # make sure to clear any pending commit/push
 # eventually you want to build a snapshot and test it
 mvn clean deploy
