@@ -1,0 +1,1059 @@
+#!/usr/bin/perl
+#+##############################################################################
+#                                                                              #
+# File: lint                                                                   #
+#                                                                              #
+# Description: statically check Perl code to find potential problems           #
+#                                                                              #
+#-##############################################################################
+
+# $Id: lint,v 2.12 2013/02/21 08:04:08 c0ns Exp $
+
+# FIXME/TODO:
+#  - @ISA checks like in lint1?
+#  - improve sub handling by checking anonymous subs
+#    (this is delicate as a sub could be inside a sub...)
+
+#
+# modules
+#
+
+use strict;
+use warnings qw(FATAL all);
+use Getopt::Long qw(GetOptions);
+use No::Worries::Die qw(handler dief);
+use No::Worries::File qw(file_read);
+use No::Worries::Log qw(log_wants_debug log_debug log_filter);
+use No::Worries::Proc qw(proc_run);
+use Pod::Usage qw(pod2usage);
+
+#
+# constants
+#
+
+use constant LINE_NUMBER => 0;
+use constant LINE_STRING => 1;
+
+#
+# global variables
+#
+
+our(%Option, @Exclude, %RE, %Stat);
+
+#
+# print debugging information to stderr
+#
+
+sub prtdbg ($) {
+    my($info) = @_;
+
+    printf(STDERR "# [%s] %s\n", $info->{type}, $info->{message});
+}
+
+#
+# check the configuration file
+#
+
+sub chkcfg () {
+    unless (defined($Option{"config"})) {
+        $Option{"config"} = "$ENV{HOME}/.lintrc" if -f "$ENV{HOME}/.lintrc";
+    }
+    return unless defined($Option{"config"});
+    foreach my $line (split(/\r?\n/, file_read($Option{"config"}))) {
+        next if $line =~ /^\s*\#/ or $line =~ /^\s*$/;
+        if ($line =~ /^\s*($RE{co})\s*=\s*(.+?)\s*$/) {
+            if ($1 eq "include") {
+                push(@{ $Option{$1} }, $2);
+            } else {
+                $Option{$1} = $2;
+            }
+        } else {
+            # exclude
+            eval { $line =~ /$line/ };
+            dief("invalid regexp: %s", $line) if $@;
+            push(@Exclude, qr/$line/);
+        }
+    }
+}
+
+#
+# check exclude regexps
+#
+
+sub chkexc () {
+    return unless $Option{"exclude"};
+    foreach my $regexp (@{ $Option{"exclude"} }) {
+        eval { $regexp =~ /$regexp/ };
+        dief("invalid regexp: %s", $regexp) if $@;
+        push(@Exclude, qr/$regexp/);
+    }
+}
+
+#
+# initialization
+#
+
+sub init () {
+    # handy regular expressions
+    $RE{co} = "b-lint|include|length";                  # configurable option
+    $RE{pv} = "v?\\d\\.(?:\\d+[\\.\\_])*\\d+";          # Perl version
+    $RE{we} = "WARNING|ERROR";                          # warning or error
+    $RE{spe} = "BEGIN|CHECK|INIT|DESTROY|END|AUTOLOAD"; # special subroutines
+    $RE{fun} = join("|", qw(
+        accept bind binmode chdir chmod chown chroot close closedir connect
+        dbmclose dbmopen exec fcntl flock fork getc ioctl kill
+        link listen lstat mkdir msgctl msgget msgrcv msgsnd open opendir
+        pipe read readdir readlink recv rename rewinddir rmdir
+        seek seekdir semctl semget semop send setsockopt shmctl shmget
+        shmread shmwrite shutdown socket socketpair stat symlink syscall
+        sysopen sysread sysseek system syswrite tell telldir truncate
+        unlink utime wait waitpid write
+    ));
+    $| = 1;
+    $Option{"b-lint"} = "all,no-context";
+    $Option{"length"} = 80;
+    Getopt::Long::Configure(qw(posix_default no_ignore_case));
+    GetOptions(\%Option,
+        "b-lint=s",
+        "config|conf|c=s",
+        "debug|d=s",
+        "exclude|e=s\@",
+        "help|h|?",
+        "include|I=s\@",
+        "length|l=i",
+        "manual|m",
+    ) or pod2usage(2);
+    pod2usage(1) if $Option{help};
+    pod2usage(exitstatus => 0, verbose => 2) if $Option{manual};
+    pod2usage(2) unless @ARGV;
+    if ($Option{debug}) {
+        $No::Worries::Log::Handler = \&prtdbg;
+        if ($Option{debug} eq "all") {
+            $Option{debug} = ".+";
+        } elsif ($Option{debug} =~ /^([\w\:]+[\s\,]+)*[\w\:]+$/) {
+            $Option{debug} = join("|", split(/[\s\,]+/, $Option{debug}));
+        }
+        log_filter("debug type=~\^($Option{debug})\$");
+        log_debug("debugging types =~ %s", $Option{debug}, { type => "main" });
+    }
+    chkcfg();
+    chkexc();
+    log_debug("using %d excludes", scalar(@Exclude), { type => "main" });
+}
+
+#
+# return the line (string) from its number
+#
+
+sub lineat ($$) {
+    my($context, $number) = @_;
+    my($line);
+
+    $line = $context->{lines}[$number - 1];
+    return("") unless $line;
+    return($line->[LINE_STRING]);
+}
+
+#
+# return the Perl command to use
+#
+
+sub perlcmd ($) {
+    my($context) = @_;
+    my(@command);
+
+    @command = qw(perl);
+    push(@command, "-I", $context->{include})
+        if defined($context->{include});
+    if ($Option{include}) {
+        foreach my $path (@{ $Option{include} }) {
+            push(@command, "-I", $path);
+        }
+    }
+    push(@command, "-T")
+        if lineat($context, 1) =~ /^\#\!.+-\w*T/;
+    return(@command);
+}
+
+#
+# execute an external command
+#
+
+sub run (@) {
+    my(@cmd) = @_;
+    my($status, $out, $err);
+
+    log_debug("running %s", "@cmd", { type => "command" });
+    $status = proc_run(command => \@cmd, stdout => \$out, stderr => \$err);
+    return($status, $out, $err);
+}
+
+#
+# report one problem
+#
+
+sub report ($$$@) {
+    my($context, $category, $message, @arguments) = @_;
+    my($number, $line);
+
+    $message = sprintf($message, @arguments) if @arguments;
+    $message =~ s/^\s+//;
+    $message =~ s/\s+$//;
+    if (defined($context->{number})) {
+        $number = ":" . $context->{number};
+    } else {
+        $number = "";
+    }
+    if (defined($context->{line})) {
+        $line = ": " . $context->{line};
+        $line =~ s/^:\s+/: /;
+    } else {
+        $line = "";
+    }
+    $message = "$context->{path}$number [$category] $message$line";
+    if (@Exclude and grep($message =~ $_, @Exclude)) {
+        $context->{excluded}++;
+    } else {
+        $context->{reported}++;
+        print("$message\n");
+    }
+}
+
+#
+# filter out non-code lines from source lines (crude parsing)
+#
+
+sub code_lines (@) {
+    my(@lines) = @_;
+    my(@clines, $pod, $empty);
+
+    $empty = 1;
+    foreach my $line (@lines) {
+        if ($pod) {
+            # inside POD block
+            if ($line->[LINE_STRING] =~ /^=cut\s*$/) {
+                # note: according to the specs, this must be followed
+                # by an empty line but we do not enforce this here
+                $pod = 0;
+            }
+            next;
+        } else {
+            # inside code block
+            if ($empty
+                and $line->[LINE_STRING] =~ /^=([a-z]{3,6}\d?)\b/
+                and $1 ne "cut") {
+                $pod = 1;
+                next;
+            }
+            if ($line->[LINE_STRING] =~ /^\s*__(DATA|END)__\s*$/) {
+                # special tokens
+                last;
+            }
+        }
+        # real Perl code here, we keep non-empty, non-comment lines
+        $empty = $line->[LINE_STRING] =~ /^\s*$/;
+        push(@clines, $line) unless $empty or $line->[LINE_STRING] =~ /^\s*\#/;
+    }
+    return(@clines);
+}
+
+#
+# basic checks:
+#  - file must be readable
+#  - read it and remember all lines (lines) and code lines (clines)
+#  - file must contain some code lines
+#
+
+sub check_basic ($) {
+    my($context) = @_;
+    my($data, $number, @lines);
+
+    # check accessibility
+    unless (-e $context->{path} and -f _ and -r _) {
+        report($context, "basic", "cannot read");
+        return;
+    }
+    $context->{bytes} = -s _;
+    # read the file and ignore empty lines at the end
+    $data = file_read($context->{path});
+    $number = 1;
+    @lines = ();
+    foreach my $line (split(/\r?\n/, $data, -1)) {
+        push(@lines, [ $number++, $line ]);
+    }
+    pop(@lines) while @lines and $lines[-1][LINE_STRING] =~ /^\s*$/;
+    $context->{lines} = \@lines;
+    $context->{pods} =
+        grep(/^=([a-z]{3,6}\d?)\b/, map($_->[LINE_STRING], @lines));
+    $context->{clines} = [ code_lines(@lines) ];
+    log_debug("file has %d bytes and %d/%d lines (%s POD)", $context->{bytes},
+              scalar(@{ $context->{clines} }), scalar(@{ $context->{lines} }),
+              $context->{pods} ? "with" : "without",
+              { type => "main" });
+    return if @{ $context->{clines} };
+    # empty (i.e. without code) is only allowed if POD
+    report($context, "basic", "empty file?!")
+        unless $context->{pods} and $context->{path} =~ /\.pod$/;
+}
+
+#
+# source checks:
+#  - lines must be short enough
+#  - lines must not contain something else than printable 7-bit ASCII
+#
+
+sub check_source ($) {
+    my($context) = @_;
+    my($string, $length);
+
+    foreach my $line (@{ $context->{clines} }) {
+        local $context->{number} = $line->[LINE_NUMBER];
+        $string = $line->[LINE_STRING];
+        # Linus said: Tabs are 8 characters ;-)
+        $string =~ s/\t/        /g;
+        $length = length($string);
+        if ($length > $Option{length}) {
+            local $context->{line} = $string;
+            report($context, "source",
+                   "line too long (%d) found", $length);
+        }
+        if ($string =~ /([^\x20-\x7e])/) {
+            report($context, "source",
+                   "unexpected character found: 0x%02x", ord($1));
+        }
+    }
+}
+
+#
+# pragma checks:
+#  - the first two pragmas must be "use strict" and "use warnings"
+#
+
+sub check_pragma ($) {
+    my($context) = @_;
+    my($string, $number, %seen);
+
+    foreach my $line (@{ $context->{clines} }) {
+        ($number, $string) = @{ $line };
+        # ignore comments at the end of line and simplify semicolon
+        $string =~ s/\s*\;\s*\#.*?$/;/;
+        $string =~ s/\s*\;\s*$/;/;
+        if ($string =~ /^\s*use\s+$RE{pv}\;$/o
+            and not $seen{perl}++) {
+            # Perl version check (allowed once)
+        } elsif ($string =~ /^\s*package\s+(\w+::)*\w+\;$/
+                 and not $seen{pkg}++) {
+            # package declaration (allowed once)
+        } elsif ($string =~ /^\s*use\s+(strict|warnings)\;$/) {
+            # expected strict or warnings pragma
+            $seen{$1}++;
+        } elsif ($string =~ /^\s*use\s+(warnings)\s*qw\(FATAL\s+all\)\;$/) {
+            # other accepted uses of the warnings pragma
+            $seen{$1}++;
+        } else {
+            # unexpected
+            last;
+        }
+    }
+    local $context->{number} = $number;
+    foreach my $pragma (qw(strict warnings)) {
+        next if $seen{$pragma};
+        report($context, "pragma",
+               "file does not start with 'use %s'", $pragma);
+    }
+}
+
+#
+# module checks:
+#  - there must be some package definitions
+#  - all the packages must be under the same name space
+#  - the name space must match the path
+#  - we also deduce the directory to include (perl -I)
+#
+
+sub check_module ($) {
+    my($context) = @_;
+    my($number, $line, %seen, $path);
+
+    foreach my $index (0 .. scalar(@{ $context->{clines} }) - 1) {
+        ($number, $line) = @{ $context->{clines}[$index] };
+        local $context->{number} = $number;
+        if ($line =~ /^\s*use\s+$RE{pv}\s*\;\s*(\#.+)?$/) {
+            # Perl version check
+        } elsif ($line =~ /^\s*package\s+((\w+\:\:)*\w+)\s*;\s*(\#.+)?$/) {
+            # package declaration
+            $seen{$1} ||= $number;
+            $context->{module} = $1
+                unless defined($context->{module})
+                   and length($context->{module}) <= length($1);
+        } elsif (not keys(%seen)) {
+            # unexpected
+            report($context, "module",
+                   "file does not start with package declaration");
+            return;
+        }
+    }
+    unless (keys(%seen)) {
+        report($context, "module",
+               "file does not contain any package declaration");
+        return;
+    }
+    foreach my $name (sort(keys(%seen))) {
+        next if $name eq $context->{module};
+        next if $name =~ /^\Q$context->{module}\E::/;
+        local $context->{number} = $seen{$name};
+        report($context, "module",
+               "module %s contains unexpected package: %s",
+               $context->{module}, $name);
+    }
+    ($path = $context->{module}) =~ s/\:\:/\//g;
+    if ($context->{path} eq "$path.pm") {
+        $context->{include} = ".";
+    } elsif ($context->{path} =~ /^(.+)\/\Q$path\E\.pm$/) {
+        $context->{include} = $1;
+    } else {
+        local $context->{number} = $seen{$context->{module}};
+        report($context, "module",
+               "file path does not match module name: %s",
+               $context->{module});
+        return;
+    }
+    log_debug("found %d modules with root %s and include %s",
+              scalar(keys(%seen)), $context->{module}, $context->{include},
+              { type => "main" });
+}
+
+#
+# syntax checks (perl -cw)
+#
+
+sub check_syntax ($) {
+    my($context) = @_;
+    my(@command, $stdout, $stderr, $status);
+
+    @command = perlcmd($context);
+    push(@command, "-cw");
+    push(@command, $context->{path});
+    ($status, $stdout, $stderr) = run(@command);
+    foreach my $line (split(/\r?\n/, $stdout)) {
+        next unless length($line);
+        report($context, "syntax", "unexpected output: %s", $line);
+    }
+    foreach my $line (split(/\r?\n/, $stderr)) {
+        next unless length($line);
+        next if $line eq "$context->{path} syntax OK";
+        report($context, "syntax", $line);
+    }
+    report($context, "syntax", "perl -cw returned %d", $status)
+        if $status and not $context->{reported};
+}
+
+#
+# filter out useless noise to better assess the number of "lines of code"
+#
+
+sub noise ($$) {
+    my($begin, $string) = @_;
+
+    if ($begin) {
+        # e.g. $^H{'charnames'} = q(CODE(0x8dba7c8));
+        return(1) if $string =~ /^\s*\$\^H\{\S+\}\s+=\s+/;
+    } else {
+        # e.g. require(5.005);
+        return(1) if $string =~ /^\s*require\($RE{pv}\);$/;
+        # e.g. use strict 'refs';
+        return(1) if $string =~ /^\s*use\s+strict(\s+\'.+\')?;$/;
+        # e.g. use warnings;
+        return(1) if $string =~ /^\s*use\s+warnings(\s+\'.+\')?;$/;
+        # e.g. BEGIN {${^WARNING_BITS} = "\377\377\377[...]\377\377\377?"}
+        return(1) if $string =~ /^\s*BEGIN\s+\{.+WARNING_BITS.+\}$/;
+    }
+    return(0);
+}
+
+#
+# B::Deparse checks (perl -MO=Deparse)
+#
+
+sub check_b_deparse ($) {
+    my($context) = @_;
+    my(@command, $stdout, $stderr, $status, $number, $string, $begin, @lines);
+
+    # use B::Deparse
+    @command = perlcmd($context);
+    push(@command, "-MO=Deparse,-l,-p,-sC");
+    push(@command, $context->{path});
+    ($status, $stdout, $stderr) = run(@command);
+    if ($status) {
+        # in case of failure, we do not use B::Deparse's output
+        report($context, "B::Deparse", "perl returned %d", $status);
+        return;
+    }
+    # first pass to handle line numbers
+    $number = 1;
+    foreach my $line (split(/\r?\n/, $stdout)) {
+        log_debug($line, { type => "B::Deparse" });
+        last if $line =~ /^__(DATA|END)__$/;
+        if ($line =~ /^\#line\s+(\d+)\s+\".+\"$/) {
+            $number = $1;
+            next;
+        } elsif ($line =~ /^(.+)\f\#line\s+(\d+)\s+\".+\"$/) {
+            ($line, $number) = ($1, $2);
+        }
+        push(@lines, [ $number++, $line ]);
+    }
+    foreach my $line (split(/\r?\n/, $stderr)) {
+        next unless length($line);
+        next if $line eq "$context->{path} syntax OK";
+        report($context, "B::Deparse", "unexpected output: %s", $line);
+    }
+    # second pass to skip useless noise and record defined(&foo) tests
+    $begin = 0;
+    $context->{dlines} = [];
+    foreach my $line (@lines) {
+        ($number, $string) = @{ $line };
+        next if $string =~ /^\s*$/;
+        if ($begin) {
+            if ($string =~ /^\s*\}$/) {
+                $begin = 0;
+                next;
+            }
+        } else {
+            if ($string =~ /^\s*BEGIN\s+\{$/) {
+                $begin = 1;
+                next;
+            }
+        }
+        next if noise($begin, $string);
+        if ($string =~ /\bdefined\(\&([\w\:]+)\)/) {
+            # record what has been tested to filter out B::Lint warnings
+            $context->{tested}{$1}++;
+        }
+        log_debug("%d: %s", $number, $string, { type => "deparse" });
+        push(@{ $context->{dlines} }, $line);
+    }
+    $context->{loc} = @{ $context->{dlines} };
+}
+
+#
+# builtin checks:
+#  - check that Perl builtin functions that return false on error have
+#    their return value checked (at least not ignored)
+#
+
+sub check_builtin ($) {
+    my($context) = @_;
+    my($number, $line, $next, $ok);
+
+    foreach my $index (0 .. scalar(@{ $context->{dlines} }) - 1) {
+        ($number, $line) = @{ $context->{dlines}[$index] };
+        next unless $line =~ /^\s*($RE{fun})\(/o;
+        $ok = 0;
+        if ($1 eq "system") {
+            # ok if we see $? on the next line
+            foreach my $offset (1 .. 2) {
+                $next = $context->{dlines}[$index + $offset];
+                last unless $next;
+                $ok++ if $next->[LINE_NUMBER] == $number + 1
+                    and $next->[LINE_STRING] =~ /\$\?/;
+            }
+        } elsif ($1 eq "exec") {
+            # ok if we see die() or dief() or exit() on the next line
+            foreach my $offset (1 .. 5) {
+                $next = $context->{dlines}[$index + $offset];
+                last unless $next;
+                $ok++ if $next->[LINE_NUMBER] == $number + 1
+                    and $next->[LINE_STRING] =~ /\b(dief?|exit)\(/;
+            }
+        }
+        next if $ok;
+        # so far so bad
+        local $context->{number} = $number;
+        report($context, "builtin", "return value of $1\(\) is not checked");
+    }
+}
+
+#
+# subroutine checks (use of parameters)
+#
+
+sub check_underscore ($) {
+    my($line) = @_;
+
+    if ($line =~ /^\s+\(my\(.+\) = \@\_\)\;$/) {
+        # idiomatic my(params) = @_
+        return("my");
+    } elsif ($line =~ /\bshift\(\@\_\)/) {
+        # idiomatic shift(@_)
+        return("shift");
+    } elsif ($line =~ /\b(validate|validate_pos)\(\@\_/) {
+        # idiomatic Params::Validate
+        return("pv");
+    } elsif ($line =~ /\b(validate_with)\(\'params\', \(\\\@\_\), /) {
+        # advanced Params::Validate
+        return("pv");
+    } elsif ($line =~ /\@\_\W/) {
+        # other use of @_
+        return("other");
+    } elsif ($line =~ /[^\$]\$\_\[/) {
+        # other use of $_[x]
+        return("other");
+    } else {
+        # other
+        return("");
+    }
+}
+
+sub check_sub_param ($$) {
+    my($context, $subctx) = @_;
+    my($number, $line, %seen, @list);
+
+    # skip if special, takes no args or is too short
+    return if $subctx->{special}
+        or (defined($subctx->{proto}) and not length($subctx->{proto}))
+        or $subctx->{end} - $subctx->{begin} <= 4;
+    # check how @_ is used
+    foreach my $index ($subctx->{begin} .. $subctx->{end}) {
+        ($number, $line) = @{ $context->{dlines}[$index] };
+        $seen{check_underscore($line)}{$index}++;
+        # give up if we detect an anonymous sub...
+        last if $index != $subctx->{begin}
+            and $line =~ /[\(\s]sub\s(\(\S*\)\s)?\{$/;
+    }
+    # check what we found
+    if ($seen{my}) {
+        @list = sort({ $a <=> $b } keys(%{ $seen{my} }));
+        if (@list > 1) {
+            # multiple my()
+            ($number, $line) = @{ $context->{dlines}[$list[1]] };
+            local $context->{number} = $number;
+            local $context->{line} = $line;
+            report($context, "param", "unexpected parameters declaration");
+        }
+        if ($seen{shift}) {
+            # my() plus shift()
+            @list = sort({ $a <=> $b } keys(%{ $seen{shift} }));
+            ($number, $line) = @{ $context->{dlines}[$list[0]] };
+            local $context->{number} = $number;
+            local $context->{line} = $line;
+            report($context, "param", "unexpected parameters declaration");
+        }
+        return;
+    }
+    return if $seen{pv} or ($seen{shift} and $subctx->{method});
+    # complain because of no my() or Params::Validate or shift()
+    ($number, $line) = @{ $context->{dlines}[$subctx->{begin}] };
+    local $context->{number} = $number;
+    report($context, "param",
+           "unexpected/missing parameters declaration in %s()",
+           $subctx->{name});
+    # maybe complain for other uses of @_
+    return unless $seen{other};
+    @list = sort({ $a <=> $b } keys(%{ $seen{other} }));
+    foreach my $i (@list) {
+        ($number, $line) = @{ $context->{dlines}[$i] };
+        local $context->{number} = $number;
+        local $context->{line} = $line;
+        report($context, "param", "unexpected use of %c_", 0x40);
+    }
+}
+
+#
+# subroutine checks (use of my)
+#
+
+sub check_sub_my ($$) {
+    my($context, $subctx) = @_;
+    my($number, $line, $state);
+
+    $state = 0;
+    foreach my $index ($subctx->{begin} .. $subctx->{end}) {
+        ($number, $line) = @{ $context->{dlines}[$index] };
+        local $context->{number} = $number;
+        if ($line =~ /^\s+\(my[ \(]/) {
+            if ($state == 0) {
+                # first use of my
+                $state = 1;
+            } elsif ($state != 1) {
+                # use of my after something else than my
+                report($context, "my", "unexpected use of my in %s()",
+                       $subctx->{name});
+                return;
+            }
+        } else {
+            # something else than my
+            if ($index != $subctx->{begin}) {
+                # give up if we detect an anonymous sub...
+                last if $line =~ /[\(\s]sub\s(\(\S*\)\s)?\{$/;
+                $state = 2;
+            }
+        }
+    }
+}
+
+#
+# subroutine checks (use of return)
+#
+
+sub check_sub_return ($$) {
+    my($context, $subctx) = @_;
+    my($number, $line, $type);
+
+    foreach my $index ($subctx->{begin} .. $subctx->{end}) {
+        ($number, $line) = @{ $context->{dlines}[$index] };
+        local $context->{number} = $number;
+        if ($line =~ /\sreturn[\;\)]/) {
+            # looks like a routine (no return value)
+            if (defined($type) and $type ne "r") {
+                report($context, "return",
+                       "subroutine %s() uses return inconsistently",
+                       $subctx->{name});
+                return;
+            }
+            $type = "r";
+        } elsif ($line =~ /\sreturn\(/) {
+            # looks like a function (return value)
+            if (defined($type) and $type ne "f") {
+                report($context, "return",
+                       "subroutine %s() uses return inconsistently",
+                       $subctx->{name});
+                return;
+            }
+            $type = "f";
+        } elsif ($line =~ /\sreturn\b/) {
+            # weird use of return
+            local $context->{line} = $line;
+            report($context, "return", "unexpected return line")
+                unless $line =~ /([\"\']).*\sreturn\b.*\1/;
+        }
+    }
+}
+
+#
+# subroutine checks (methods called as subroutines)
+#
+
+sub check_sub_method ($$) {
+    my($context, $method) = @_;
+    my($number, $line);
+
+    foreach my $index (0 .. scalar(@{ $context->{dlines} }) - 1) {
+        ($number, $line) = @{ $context->{dlines}[$index] };
+        local $context->{number} = $number;
+        local $context->{line} = $line;
+        if ($line =~ m{ (\x26\x24|->)? ((?: \w+ \:\: )* \w+) \( }x) {
+            next unless $method->{$2};
+            next if $1;
+            report($context, "method",
+                   "method %s\(\) possibly called as subroutine", $2);
+        } else {
+            next;
+        }
+    }
+}
+
+#
+# subroutine checks:
+#  - make sure arguments are handled in an acceptable manner
+#  - all non-method subroutines must have a prototype
+#  - make sure my is used at the beginning of the subroutine
+#  - make sure return is used consistently
+#  - check for methods that are called as subroutines (i.e. without ->)
+#
+
+sub check_sub ($) {
+    my($context) = @_;
+    my($number, $line, $subctx, %method);
+
+    foreach my $index (0 .. scalar(@{ $context->{dlines} }) - 1) {
+        ($number, $line) = @{ $context->{dlines}[$index] };
+        local $context->{number} = $number;
+        if ($subctx) {
+            # inside a subroutine
+            if ($line =~ /^$subctx->{indent}\}\s*$/) {
+                # ending of subroutine (hopefully)
+                $subctx->{end} = $index;
+                log_debug("checking sub %s %d:%d", $subctx->{name},
+                          $subctx->{begin}, $subctx->{end},
+                          { type => "sub" });
+                check_sub_param($context, $subctx);
+                check_sub_my($context, $subctx);
+                check_sub_return($context, $subctx);
+                $subctx = undef;
+            }
+        } else {
+            # outside a subroutine
+            next unless $line =~ /^\s*sub\s/ and not $line =~ /[\;\}]$/;
+            if ($line =~ m{ ^ (\s*) sub \s+
+                              ((?: \w+ \:\: )* \w+) \s+
+                              (?: \( ([\$\@\%\&\*\\\;]*) \) \s+)?
+                              (?: \: \s+ ((?: \w+ \s+ )* \w+) \s+)?
+                              \{ \s* $ }x) {
+                # remember the subroutine context
+                $subctx = {
+                    indent => $1,
+                    name   => $2,
+                    proto  => $3,
+                    attr   => $4,
+                    begin  => $index,
+                };
+                $subctx->{special} =
+                    $subctx->{name} =~ /^(\w+\:\:)*($RE{spe})$/;
+                $subctx->{method} = 1
+                    if $subctx->{attr} and $subctx->{attr} =~ /\bmethod\b/;
+                $method{$subctx->{name}}++ if $subctx->{method};
+                report($context, "sub",
+                       "subroutine %s() is not a method and lacks a prototype",
+                       $subctx->{name}) unless defined($subctx->{proto})
+                                            or $subctx->{method}
+                                            or $subctx->{special};
+            } else {
+                local $context->{line} = $line;
+                report($context, "sub", "unexpected subroutine declaration");
+            }
+        }
+    }
+    if ($subctx) {
+        report($context, "sub", "end of subroutine %s() not found!",
+               $subctx->{name});
+        return;
+    }
+    check_sub_method($context, \%method);
+}
+
+#
+# B::Lint checks (perl -MO=Lint)
+#
+
+sub check_b_lint ($) {
+    my($context) = @_;
+    my(@command, $stdout, $stderr, $status, $name);
+
+    return if $Option{"b-lint"} eq "none";
+    @command = perlcmd($context);
+    push(@command, "-MO=Lint," . $Option{"b-lint"});
+    push(@command, $context->{path});
+    ($status, $stdout, $stderr) = run(@command);
+    foreach my $line (split(/\r?\n/, $stdout)) {
+        next unless length($line);
+        report($context, "B::Lint", "unexpected output: %s", $line);
+    }
+    foreach my $line (split(/\r?\n/, $stderr)) {
+        next unless length($line);
+        next if $line eq "$context->{path} syntax OK";
+        log_debug($line, { type => "B::Lint" });
+        if ($line =~ /^(.+) at \Q$context->{path}\E line (\d+)$/) {
+            $line = $1;
+            local $context->{number} = $2;
+            # ignore spurious warnings triggered by the constant pragma
+            next if $line =~ /Bare sub name \'.+\' interpreted as string/ and
+                lineat($context, $context->{number}) =~ /\buse\s+constant\s/;
+            # ignore nonexistant subroutine warnings if tested beforehand
+            if ($line =~ /(Undefined|Nonexistant) subroutine '(.+)' called/) {
+                $name = $2;
+                next if $context->{tested}{$name};
+                next if $name =~ s/^.+::// and $context->{tested}{$name};
+                next if lineat($context, $context->{number}) =~ /\seval\s/;
+            }
+            # so far so bad
+            report($context, "B::Lint", $line);
+        } else {
+            report($context, "B::Lint", $line);
+        }
+    }
+    report($context, "B::Lint", "perl returned %d", $status)
+        if $status and not $context->{reported};
+}
+
+#
+# check POD (podchecker)
+#
+
+sub check_pod ($) {
+    my($context) = @_;
+    my(@command, $stdout, $stderr, $status);
+
+    @command = ("podchecker", $context->{path});
+    ($status, $stdout, $stderr) = run(@command);
+    foreach my $line (split(/\r?\n/, $stdout)) {
+        next unless length($line);
+        report($context, "pod", "unexpected output: %s", $line);
+    }
+    foreach my $line (split(/\r?\n/, $stderr)) {
+        next unless length($line);
+        next if $line =~ / pod syntax OK\.$/;
+        # FIXME: review what we _really_ ignore
+        #next if $line =~ / has \d+ pod syntax errors?\.$/;
+        #next if $line =~ / does not contain any pod commands\.$/;
+        #next if $line =~ / multiple occurr?ence of link target /;
+        #next if $line =~ / No numeric argument for =over /;
+        if ($line =~ /^\*\*\* ($RE{we}): (.+) at line (-|\d+) in file (.+)$/) {
+            local $context->{number} = $3 eq "-" ? undef : $3;
+            report($context, "pod", "$2 (\L$1\E)");
+        } else {
+            report($context, "pod", "unexpected output: %s", $line);
+        }
+    }
+    report($context, "pod", "perl returned %d", $status)
+        if $status and not $context->{reported};
+}
+
+#
+# process one file
+#
+
+sub lint ($) {
+    my($context) = @_;
+
+    log_debug("processing %s", $context->{path}, { type => "main" });
+    # step 1
+    check_basic($context);
+    return if $context->{reported};
+    if (@{ $context->{clines} }) {
+        # step 2
+        check_source($context);
+        check_pragma($context);
+        check_module($context) if $context->{path} =~ /\.pm$/;
+        return if $context->{reported};
+        # step 3
+        check_syntax($context);
+        return if $context->{reported};
+        # step 4
+        check_b_deparse($context);
+        return if $context->{reported};
+        check_builtin($context);
+        check_sub($context);
+        # step 5
+        check_b_lint($context);
+        return if $context->{reported};
+    } else {
+        # no lines of code!
+        $context->{loc} = 0;
+    }
+    # step 6
+    check_pod($context) if $context->{pods};
+}
+
+#
+# process all the given files in order
+#
+
+sub main () {
+    my($context);
+
+    $Stat{bad} = $Stat{errors} = $Stat{ok} = $Stat{loc} = $Stat{lines} = 0;
+    foreach my $path (@ARGV) {
+        $context = { path => $path };
+        lint($context);
+        if ($context->{reported}) {
+            $context->{excluded} ||= 0;
+            printf("%s: bad with %d errors (plus %d excluded)\n",
+                   $path, $context->{reported}, $context->{excluded});
+            $Stat{bad}++;
+            $Stat{errors} += $context->{reported};
+        } else {
+            printf("%s: ok with %d lines of code out of %d lines of text\n",
+                   $path, $context->{loc}, scalar(@{ $context->{lines} }));
+            $Stat{ok}++;
+            $Stat{loc} += $context->{loc};
+            $Stat{lines} += @{ $context->{lines} };
+        }
+    }
+    printf("%d checked: %d ok (%d/%d lines) and %d bad (%d errors)\n",
+           $Stat{bad} + $Stat{ok}, $Stat{ok}, $Stat{loc}, $Stat{lines},
+           $Stat{bad}, $Stat{errors});
+}
+
+#
+# just do it
+#
+
+init();
+main();
+
+__END__
+
+=head1 NAME
+
+lint - statically check Perl code to find potential problems
+
+=head1 SYNOPSIS
+
+B<lint> [I<OPTIONS>] I<PATH>...
+
+=head1 DESCRIPTION
+
+This program statically checks Perl code to try to find potential
+problems. It checks some of the recommendations of "Lionel's Perl
+Programming Guide" (see C<http://cern.ch/lionel.cons/perl/guide>).
+
+It does not try to I<execute> the code but it does try to I<compile>
+it, so it will execute all BEGIN and CHECK blocks. This is a feature.
+
+Behind the scene, it uses other tools like "perl -cw" or C<podchecker>
+as well as the L<B::Deparse> and L<B::Lint> compiler backends.
+
+Use "lint -h" to see the list of options and "lint -m" to see this
+documentation.
+
+=head1 OPTIONS
+
+=over
+
+=item B<--b-lint>
+
+set the options to give to L<B::Lint> (default: C<all,no-context>)
+
+=item B<--debug>, B<-d> I<STRING>
+
+enable one or more debug categories (comma separated); possible
+values: C<main>, C<command>, C<deparse> or C<all>.
+
+=item B<--exclude>, B<-e> I<REGEXP>
+
+exclude problems matching the given regular expression;
+this option can be given multiple times
+
+=item B<--config>, B<-c> I<PATH>
+
+use this configuration file (default: C<~/.lintrc>)
+
+=item B<--help>, B<-h>, B<-?>
+
+show some help
+
+=item B<--include>, B<-I> I<PATH>
+
+add the given path the to Perl's include paths (B<-I> option);
+this option can be given multiple times
+
+=item B<--length>, B<-l> I<NUMBER>
+
+set the maximum allowed line length (default: 80)
+
+=item B<--manual>, B<-m>
+
+show this manual
+
+=back
+
+=head1 CONFIGURATION FILE
+
+B<lint> can be customized via a configuration file (see the B<--config> option).
+
+The configuration file can contain empty lines, comments (lines starting with
+the C<#> character), option assignments (in the form C<option=value>) and
+regular expressions to exclude (everything else).
+
+Here is a sample configuration file:
+
+  # options
+  length = 98
+  # excludes
+  myprog:\d+ .+ method foo\(\) possibly called as subroutine
+
+=head1 AUTHOR
+
+Lionel Cons L<http://cern.ch/lionel.cons>
+
+Copyright CERN 2012
