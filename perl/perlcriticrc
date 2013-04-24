@@ -1,0 +1,151 @@
+#+##############################################################################
+#                                                                              #
+# Lionel's .perlcritic                                                         #
+#                                                                              #
+#-##############################################################################
+
+# $Id: dot.perlcriticrc,v 1.9 2012/12/12 13:11:41 c0ns Exp $
+
+#
+# global settings
+#
+
+severity = 3
+color    = 0
+verbose  = %f:%l:%c %m [%s@%p]\n
+
+#+##############################################################################
+#                                                                              #
+# customized                                                                   #
+#                                                                              #
+#-##############################################################################
+
+# if tabs are to be forbidden, they should be forbidden everywhere!
+[CodeLayout::ProhibitHardTabs]
+allow_leading_tabs = 0
+
+# it is fine to use a bit more if/elsif/else blocks than the default
+[ControlStructures::ProhibitCascadingIfElse]
+max_elsif = 5
+
+# it is fine to use a bit more nesting levels than the default
+[ControlStructures::ProhibitDeepNests]
+max_nests = 6
+
+# dief() from No::Worries could be used to throw an exception
+[RegularExpressions::ProhibitCaptureWithoutTest]
+exception_source = dief
+
+# it is fine to use a bit more arguments than the default
+[Subroutines::ProhibitManyArgs]
+max_arguments = 7
+
+# it is fine to use "no strict qw(refs)"
+[TestingAndDebugging::ProhibitNoStrict]
+allow = refs
+
+# it is fine to use "no warnings qw(once prototype)" or similar
+[TestingAndDebugging::ProhibitNoWarnings]
+allow = once redefine prototype
+
+# it is fine to allow some punctuation variables (and this is a useful test)
+# note: $^S is not very common but used in No::Worries anyway
+# note: $/ is a false positive appearing for instance with regex => qr/^\d+$/
+[Variables::ProhibitPunctuationVars]
+allow = $0 $$ $| $@ $! $? $< $> $^O $^S $/
+severity = 3
+
+# it is fine to assign $| or @ARGV or %ENV or %SIG globally
+[Variables::RequireLocalizedPunctuationVars]
+allow = $| @ARGV %ENV %SIG
+
+#+##############################################################################
+#                                                                              #
+# enabled (i.e. useful tests with a raised severity)                           #
+#                                                                              #
+#-##############################################################################
+
+[BuiltinFunctions::ProhibitStringySplit]
+severity = 3
+
+# cosmetic but good practice anyway (and easy to adopt)
+[CodeLayout::ProhibitTrailingWhitespace]
+severity = 3
+
+# cosmetic but good practice anyway (and easy to adopt)
+[CodeLayout::RequireTrailingCommas]
+severity = 3
+
+[InputOutput::RequireCheckedClose]
+severity = 3
+
+[References::ProhibitDoubleSigils]
+severity = 3
+
+[Subroutines::ProhibitAmpersandSigils]
+severity = 3
+
+# cosmetic but good practice anyway (and easy to adopt)
+[ValuesAndExpressions::RequireUpperCaseHeredocTerminator]
+severity = 3
+
+[Variables::ProhibitPerl4PackageNames]
+severity = 3
+
+#+##############################################################################
+#                                                                              #
+# disabled                                                                     #
+#                                                                              #
+# note: a maximum line length, enforced elsewhwere, is here to avoid abuses    #
+#                                                                              #
+#-##############################################################################
+
+# the block forms for grep and map do not necessarily add clarity
+[-BuiltinFunctions::RequireBlockGrep]
+[-BuiltinFunctions::RequireBlockMap]
+
+# @ISA is accepted since "base" is deprecated and "parent" is not common
+[-ClassHierarchies::ProhibitExplicitISA]
+
+# comparison operators (for instance) are fine in unless/until conditions
+[-ControlStructures::ProhibitNegativeExpressionsInUnlessAndUntilConditions]
+
+# No::Worries error handling is preferred so usage of Carp is not enforced
+[-ErrorHandling::RequireCarping]
+
+# it is overkill to use a return value for simple code to be eval'ed
+[-ErrorHandling::RequireCheckingReturnValueOfEval]
+
+# there are cases where we do want to use <STDIN> and not <ARGV> or <>
+[-InputOutput::ProhibitExplicitStdin]
+
+# -t is good enough for our needs and IO::Interactive is not common
+[-InputOutput::ProhibitInteractiveTest]
+
+# there are cases where it is better to merge multiple small packages in one
+[-Modules::ProhibitMultiplePackages]
+
+# complex regexps are fine
+[-RegularExpressions::ProhibitComplexRegexes]
+
+# normal regexps are fine when small
+[-RegularExpressions::RequireExtendedFormatting]
+
+# it is overkill to always require both /s and /m!
+[-RegularExpressions::RequireDotMatchAnything]
+[-RegularExpressions::RequireLineBoundaryMatching]
+
+# prototypes are on the contrary mandatory!
+[-Subroutines::ProhibitSubroutinePrototypes]
+
+# argument handling is better checked with my lint
+[-Subroutines::RequireArgUnpacking]
+
+# a final return for procedures (that return nothing) does not bring much
+[-Subroutines::RequireFinalReturn]
+
+# the constant pragma is accepted since the Readonly module is not common
+[-ValuesAndExpressions::ProhibitConstantPragma]
+
+# package variables are tolerated
+[-Variables::ProhibitPackageVars]
