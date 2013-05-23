@@ -2,7 +2,9 @@
 #
 # pylint wrapper couting errors and checking rating
 #
-pylint -f parseable ${1+"$@"} | {
+base=`dirname $0`
+[ -f "${base}/.pylintrc" ] && options="--rcfile ${base}/.pylintrc"
+pylint ${options} -f parseable ${1+"$@"} | {
     errors=0
     metrics=0
     while read line; do
