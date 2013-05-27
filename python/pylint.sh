@@ -32,6 +32,6 @@ pylint ${options} -f parseable ${1+"$@"} | {
         fi
     done
     echo "pylint: ${errors} errors detected"
-    [ ${errors} -gt 0 ] && exit 1
+    [ ${errors} -gt 0 ] && exit 1 || exit 0
 }
 exit $?
