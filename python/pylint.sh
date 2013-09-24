@@ -2,6 +2,10 @@
 #
 # pylint wrapper couting errors and checking rating
 #
+if [ `python -c 'import sys; print("%i" % (sys.hexversion>=0x02060000))'` -eq 0 ]; then
+  echo "pylint currently does not work with Python <2.6 :-("
+  exit 0
+fi
 base=`dirname $0`
 [ -f "${base}/.pylintrc" ] && options="--rcfile ${base}/.pylintrc"
 pylint ${options} -f parseable ${1+"$@"} | {
