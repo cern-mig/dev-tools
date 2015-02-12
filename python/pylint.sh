@@ -8,7 +8,7 @@ if [ `python -c 'import sys; print("%i" % (sys.hexversion>=0x02060000))'` -eq 0 
 fi
 base=`dirname $0`
 [ -f "${base}/.pylintrc" ] && options="--rcfile ${base}/.pylintrc"
-pylint ${options} -f parseable ${1+"$@"} | {
+pylint ${options} -f text ${1+"$@"} | {
     errors=0
     metrics=0
     while read line; do
