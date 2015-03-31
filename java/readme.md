@@ -58,7 +58,7 @@ Perform a release
 
 In order to release the package and get it synchronized with
 central Maven repo follow the Sonatype guide:
-[Sonatype OSS Maven Repository Usage Guide](http://docs.sonatype.org/display/Repository/Sonatype+OSS+Maven+Repository+Usage+Guide).
+[Sonatype OSSRH Guide](http://central.sonatype.org/pages/ossrh-guide.html).
 
 If you have the proper configuration for Sonatype and it is not your first
 release then the release process can be summarized with the following steps:
