@@ -1,7 +1,7 @@
 Code Style
 ==========
 
-The chosed code style is to use 4 spaces for indentation, no tabs 
+The chosen code style is to use 4 spaces for indentation, no tabs 
 and no mixed in tabs and spaces.
 
 IntelliJ IDEA code reformat has been ran on all source code files,
