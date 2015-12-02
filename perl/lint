@@ -7,7 +7,7 @@
 #                                                                              #
 #-##############################################################################
 
-# $Id: lint,v 2.12 2013/02/21 08:04:08 c0ns Exp $
+# $Id: lint,v 2.13 2014/11/10 08:51:34 c0ns Exp $
 
 # FIXME/TODO:
 #  - @ISA checks like in lint1?
@@ -481,6 +481,7 @@ sub check_b_deparse ($) {
 
     # use B::Deparse
     @command = perlcmd($context);
+    push(@command, "-CS") if $] ge "5.008001";;
     push(@command, "-MO=Deparse,-l,-p,-sC");
     push(@command, $context->{path});
     ($status, $stdout, $stderr) = run(@command);
