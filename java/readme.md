@@ -1,12 +1,13 @@
 Code Style
 ==========
 
-The chosen code style is to use 4 spaces for indentation, no tabs 
-and no mixed in tabs and spaces.
+The chosen code style is to use 4 spaces for indentation and no tabs at all.
 
-IntelliJ IDEA code reformat has been ran on all source code files,
-from time to time it would be nice to reformat the code just to keep
-the source code in a coherent style.
+The main source code must comply to our
+[Checkstyle](http://checkstyle.sourceforge.net/)
+configuration (see `checkstyle.xml`).
+
+In addition, the test source code should also comply to it.
 
 Generate documentation and upload it to GitHub Pages
 ====================================================
@@ -37,7 +38,6 @@ mvn site
 If the command executes successfully the updated documentation will
 appear at this address, with a delay of 5-15 minutes:
 http://cern-mig.github.com/project-name/.
-
 
 Build a snapshot
 ================
@@ -75,4 +75,3 @@ mvn release:perform
 
 At this point follow point 8 of the Sonatype guide in order to confirm
 the release and get it synchronized with central Maven repository.
-
