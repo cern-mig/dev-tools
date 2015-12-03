@@ -9,6 +9,16 @@ configuration (see `checkstyle.xml`).
 
 In addition, the test source code should also comply to it.
 
+Generate Ant files from Maven
+=============================
+
+If the project contains Ant files such as `maven-build.xml` and `maven-build.properties`,
+they can be updated by running:
+
+```bash
+mvn ant:ant
+```
+
 Generate documentation and upload it to GitHub Pages
 ====================================================
 
