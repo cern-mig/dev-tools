@@ -67,7 +67,7 @@ echo "executing python setup.py build"
 python setup.py	build
 
 echo "uploading it to pypi"
-python setup.py sdist upload || { echo "pypi upload failed"; exit 1; }
+python setup.py sdist upload -r pypi || { echo "pypi upload failed"; exit 1; }
 
 popd # cloned folder
 popd # tmpdir
