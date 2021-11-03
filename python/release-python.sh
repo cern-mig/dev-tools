@@ -62,7 +62,8 @@ pushd ${PACKAGE_NAME}
 
 echo "cleaning eventual py[co] files"
 find . -type f -name "*.py[co]" -exec rm -fv {} \;
-rmdir -v `find . -type d -name "__pycache__"`
+pycache=`find . -type d -name "__pycache__"`
+[ -n "${pycache}"] && rmdir -v ${pycache}
 
 echo "executing python setup.py build"
 python setup.py	build
