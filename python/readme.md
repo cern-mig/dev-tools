@@ -18,7 +18,7 @@ It is very recommended to run static code analyzer like `pylint`,
 you can find a `pylint` configuration file in this folder,
 it is called `.pylintrc`.
 You can either place `.pylintrc` in your home folder or in the module
-folder, if you chosed the latest you then have to pass the file to pylint:
+folder, if you chose the latest you then have to pass the file to pylint:
 ```bash
 pylint --rcfile=.pylintrc module/
 ```
@@ -39,10 +39,11 @@ To release a new version of the module please follow these steps:
 
 You are now almost ready to release a new version of the module.
 
-Make sure you read the pypi guide:
-http://wiki.python.org/moin/CheeseShopTutorial#Submitting_Packages_to_the_Package_Index
+Packaging documentation: https://packaging.python.org/
 
-and do not forget to set the `.pypirc` file (http://docs.python.org/2/distutils/packageindex.html#pypirc).
+Make sure you have a valid `.pypirc` file.
+
+We use twine for PyPI upload: https://pypi.org/project/twine/
 
 You can now proceed and release the package using the release script,
 from the module's git root run the helper script provided:
