@@ -61,7 +61,8 @@ git clone git://github.com/cern-mig/${PACKAGE_NAME}.git
 pushd ${PACKAGE_NAME}
 
 echo "cleaning eventual py[co] files"
-find . -name "*.py[co]" -exec rm -rf {} \;
+find . -type f -name "*.py[co]" -exec rm -fv {} \;
+rmdir -v `find . -type d -name "__pycache__"`
 
 echo "executing python setup.py build"
 python setup.py	build
