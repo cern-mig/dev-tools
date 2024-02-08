@@ -7,7 +7,7 @@
 #                                                                              #
 #-##############################################################################
 
-# $Id: lint,v 2.13 2014/11/10 08:51:34 c0ns Exp $
+# $Id: lint,v 2.16 2023/02/22 13:58:14 c0ns Exp $
 
 # FIXME/TODO:
 #  - @ISA checks like in lint1?
@@ -23,7 +23,7 @@ use warnings qw(FATAL all);
 use Getopt::Long qw(GetOptions);
 use No::Worries::Die qw(handler dief);
 use No::Worries::File qw(file_read);
-use No::Worries::Log qw(log_wants_debug log_debug log_filter);
+use No::Worries::Log qw(log_debug log_filter);
 use No::Worries::Proc qw(proc_run);
 use Pod::Usage qw(pod2usage);
 
@@ -122,6 +122,7 @@ sub init () {
         "include|I=s\@",
         "length|l=i",
         "manual|m",
+        "wall",
     ) or pod2usage(2);
     pod2usage(1) if $Option{help};
     pod2usage(exitstatus => 0, verbose => 2) if $Option{manual};
@@ -297,6 +298,56 @@ sub check_basic ($) {
 }
 
 #
+# pragma checks:
+#  - the first two pragmas must be "use strict" and "use warnings"
+#
+
+sub check_pragma ($) {
+    my($context) = @_;
+    my($string, $number, %seen);
+
+    foreach my $line (@{ $context->{clines} }) {
+        ($number, $string) = @{ $line };
+        # ignore comments at the end of line and simplify semicolon
+        $string =~ s/\s*\;\s*\#.*?$/;/;
+        $string =~ s/\s*\;\s*$/;/;
+        if ($string =~ /^\s*use\s+$RE{pv}\;$/o
+            and not $seen{perl}++) {
+            # Perl version check (allowed once)
+        } elsif ($string =~ /^\s*package\s+(\w+::)*\w+\;$/
+                 and not $seen{pkg}++) {
+            # package declaration (allowed once)
+        } elsif ($string =~ /^\s*use\s+strict\;$/
+                 and not $seen{strict}++) {
+            # expected strict pragma (allowed once)
+        } elsif ($string =~ /^\s*use\s+warnings\;$/
+                 and not $Option{wall} and not $seen{warnings}++) {
+            # expected warnings pragma (allowed once)
+        } elsif ($string =~ /^\s*use\s+warnings\s*qw\(FATAL\s+all\)\;$/
+                 and not $seen{warnings}++) {
+            # expected warnings pragma (allowed once)
+        } elsif ($string =~ /^\s*use\s+utf8\;$/
+                 and not $seen{utf8}++) {
+            # expected utf8 pragma (allowed once)
+        } else {
+            # unexpected
+            last;
+        }
+    }
+    local $context->{number} = $number;
+    unless ($seen{strict}) {
+        $string = "use strict";
+        report($context, "pragma", "file does not start with '$string'");
+    }
+    unless ($seen{warnings}) {
+        $string = "use warnings";
+        $string .= " qw(FATAL all)" if $Option{wall};
+        report($context, "pragma", "file does not start with '$string'");
+    }
+    $context->{utf8} = $seen{utf8};
+}
+
+#
 # source checks:
 #  - lines must be short enough
 #  - lines must not contain something else than printable 7-bit ASCII
@@ -317,49 +368,10 @@ sub check_source ($) {
             report($context, "source",
                    "line too long (%d) found", $length);
         }
-        if ($string =~ /([^\x20-\x7e])/) {
+        if (not $context->{utf8} and $string =~ /([^\x20-\x7e])/) {
             report($context, "source",
                    "unexpected character found: 0x%02x", ord($1));
         }
-    }
-}
-
-#
-# pragma checks:
-#  - the first two pragmas must be "use strict" and "use warnings"
-#
-
-sub check_pragma ($) {
-    my($context) = @_;
-    my($string, $number, %seen);
-
-    foreach my $line (@{ $context->{clines} }) {
-        ($number, $string) = @{ $line };
-        # ignore comments at the end of line and simplify semicolon
-        $string =~ s/\s*\;\s*\#.*?$/;/;
-        $string =~ s/\s*\;\s*$/;/;
-        if ($string =~ /^\s*use\s+$RE{pv}\;$/o
-            and not $seen{perl}++) {
-            # Perl version check (allowed once)
-        } elsif ($string =~ /^\s*package\s+(\w+::)*\w+\;$/
-                 and not $seen{pkg}++) {
-            # package declaration (allowed once)
-        } elsif ($string =~ /^\s*use\s+(strict|warnings)\;$/) {
-            # expected strict or warnings pragma
-            $seen{$1}++;
-        } elsif ($string =~ /^\s*use\s+(warnings)\s*qw\(FATAL\s+all\)\;$/) {
-            # other accepted uses of the warnings pragma
-            $seen{$1}++;
-        } else {
-            # unexpected
-            last;
-        }
-    }
-    local $context->{number} = $number;
-    foreach my $pragma (qw(strict warnings)) {
-        next if $seen{$pragma};
-        report($context, "pragma",
-               "file does not start with 'use %s'", $pragma);
     }
 }
 
@@ -912,8 +924,8 @@ sub lint ($) {
     return if $context->{reported};
     if (@{ $context->{clines} }) {
         # step 2
-        check_source($context);
         check_pragma($context);
+        check_source($context);
         check_module($context) if $context->{path} =~ /\.pm$/;
         return if $context->{reported};
         # step 3
@@ -1036,6 +1048,10 @@ set the maximum allowed line length (default: 80)
 
 show this manual
 
+=item B<--wall>
+
+enable more warnings
+
 =back
 
 =head1 CONFIGURATION FILE
@@ -1057,4 +1073,4 @@ Here is a sample configuration file:
 
 Lionel Cons L<http://cern.ch/lionel.cons>
 
-Copyright CERN 2012
+Copyright CERN 2012-2023

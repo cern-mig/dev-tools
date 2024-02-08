@@ -12,4 +12,4 @@ included in this folder.
 
 The code should be accepted by `perlcritic` with the configuration file
 included in this folder (`perlcriticrc`). For more information, see
-http://search.cpan.org/dist/Perl-Critic/bin/perlcritic.
+https://metacpan.org/dist/Perl-Critic/view/bin/perlcritic.
