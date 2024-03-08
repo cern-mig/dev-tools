@@ -47,7 +47,7 @@ mvn site
 
 If the command executes successfully the updated documentation will
 appear at this address, with a delay of 5-15 minutes:
-http://cern-mig.github.com/project-name/.
+http://cern-mig.github.io/project-name/.
 
 Build a snapshot
 ================
