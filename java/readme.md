@@ -52,26 +52,26 @@ http://cern-mig.github.io/project-name/.
 Build a snapshot
 ================
 
-Sonatype Nexus is used for the package release, if you want to build
-a snapshot first have a read at their guide:
-[Sonatype OSS Maven Repository Usage Guide](http://docs.sonatype.org/display/Repository/Sonatype+OSS+Maven+Repository+Usage+Guide).
-
 Building a snapshot is as easy as running a single command when you have
 proper configuration.
 
 ```bash
-mvn clean deploy
+mvn clean package
 ```
+
+Note: Sonatype does not support deploying snapshots anymore, see
+[FAQ: Does the Portal support SNAPSHOT releases?](https://central.sonatype.org/faq/snapshot-releases/#does-the-portal-support-snapshot-releases).
 
 Perform a release
 =================
 
 In order to release the package and get it synchronized with
-central Maven repo follow the Sonatype guide:
-[Sonatype OSSRH Guide](http://central.sonatype.org/pages/ossrh-guide.html).
+the Central Maven repository follow the Sonatype guide:
+[The Central Repository Documentation](https://central.sonatype.org/register/central-portal/).
 
-If you have the proper configuration for Sonatype and it is not your first
-release then the release process can be summarized with the following steps:
+If you have the proper configuration for Sonatype in your `~/.m2/settings.xml`
+and it is not your first release then the release process can be summarized
+with the following steps:
 
 ```bash
 # make sure to clear any pending commit/push
@@ -82,6 +82,3 @@ mvn release:clean
 mvn release:prepare
 mvn release:perform
 ```
-
-At this point follow point 8 of the Sonatype guide in order to confirm
-the release and get it synchronized with central Maven repository.
